@@ -20,7 +20,7 @@ type extractedJob struct {
 	summary  string
 }
 
-var baseURL string = "https://kr.indeed.com/jobs?q=developer&limit=50"
+var baseURL string = "https://kr.indeed.com/jobs?q=ios&limit=50"
 
 func main() {
 	var jobs []extractedJob
@@ -31,6 +31,7 @@ func main() {
 		jobs = append(jobs, extractedJobs...)
 	}
 	writeJobs(jobs)
+	fmt.Println("Done, extracted", len(jobs), "jobs")
 }
 
 func writeJobs(jobs []extractedJob) {
@@ -40,15 +41,23 @@ func writeJobs(jobs []extractedJob) {
 	w := csv.NewWriter(file)
 	defer w.Flush()
 
-	headers := []string{"ID", "Title", "Location", "Salary", "Summary"}
+	headers := []string{"Link", "Title", "Location", "Salary", "Summary"}
 
 	wErr := w.Write(headers)
 	checkErr(wErr)
+
+	for _, job := range jobs {
+		jobSlice := []string{"https://kr.indeed.com/viewjob?jk=" + job.id, job.title, job.location, job.salary, job.summary}
+		jwErr := w.Write(jobSlice)
+		checkErr(jwErr)
+	}
 
 }
 
 func getPage(page int) []extractedJob {
 	var jobs []extractedJob
+	c := make(chan extractedJob)
+
 	pageURL := baseURL + "&start=" + strconv.Itoa(page*50)
 	fmt.Println("Requesting", pageURL)
 	res, err := http.Get(pageURL)
@@ -61,15 +70,19 @@ func getPage(page int) []extractedJob {
 	checkErr(err)
 	searchCards := doc.Find(".resultWithShelf")
 	searchCards.Each(func(i int, card *goquery.Selection) {
-		job := extractJob(card)
-		jobs = append(jobs, job)
+		go extractJob(card, c)
 	})
+
+	for i := 0; i < searchCards.Length(); i++ {
+		job := <-c
+		jobs = append(jobs, job)
+	}
 
 	return jobs
 
 }
 
-func extractJob(card *goquery.Selection) extractedJob {
+func extractJob(card *goquery.Selection, c chan<- extractedJob) {
 	id, _ := card.Attr("data-jk")
 	title := cleanString(card.Find(".jobTitle>span").Text())
 	location := cleanString(card.Find(".companyLocation").Text())
@@ -83,7 +96,12 @@ func extractJob(card *goquery.Selection) extractedJob {
 	// fmt.Println(summary)
 	// fmt.Println()
 
-	return extractedJob{id: id, title: title, location: location, salary: salary, summary: summary}
+	c <- extractedJob{
+		id:       id,
+		title:    title,
+		location: location,
+		salary:   salary,
+		summary:  summary}
 
 }
 
